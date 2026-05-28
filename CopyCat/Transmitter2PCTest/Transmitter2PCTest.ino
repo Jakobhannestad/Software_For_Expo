@@ -2,11 +2,13 @@
 #include <WebServer.h>
 #include <WebSocketsServer.h>
 
-const char* apSSID = "ESP32-ChatRoom";
-const char* apPass = "HeiHeiHei";
+const char* apSSID = "ESP32-Chat";
+const char* apPass = "12345678";
 
 WebServer server(80);
 WebSocketsServer webSocket(81);
+string Command = "";
+
 const char* htmlPage =
 "<!DOCTYPE html><html><head><title>ESP32 Chat</title></head><body>"
 "<h2>ESP32 Chat</h2>"
@@ -22,7 +24,6 @@ const char* htmlPage =
 "function sendMsg(){"
 "  var i = document.getElementById('msg');"
 "  ws.send(i.value);"
-"  addLine('Me: ' + i.value);"
 "  i.value = '';"
 "}"
 "function addLine(t){"
@@ -33,9 +34,15 @@ const char* htmlPage =
 
 void onWsEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
   if (type == WStype_TEXT) {
-    Serial.printf("From browser: %s\n", payload);
-    String reply = "got '" + String((char*)payload) + "'";
-    webSocket.sendTXT(num, reply);
+    String reply = "";
+    for (size_t i = 0; i < length; i++)
+    {
+      reply = reply + (char)payload[i];
+    }
+    Serial.printf("From browser: %s\n", reply);
+    String broadCastMessage = "User: " +  String(num) + " " + reply;
+    webSocket.broadcastTXT(broadCastMessage);
+    Command = broadCastMessage
   } else if (type == WStype_CONNECTED) {
     Serial.printf("Client %u connected\n", num);
     webSocket.sendTXT(num, "hello from ESP32");
@@ -49,13 +56,16 @@ void onWsEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
 void setup() 
 {
     Serial.begin(115200);
-    WiFi.softAP(apSSID,apPass);
+
+    WiFi.softAP(apSSID, apPass);
     Serial.print("AP IP: ");
-    Serial.println(WiFi.softAPIP());
+    Serial.println(WiFi.softAPIP());      // almost always 192.168.4.1
+
     server.on("/", []() { server.send(200, "text/html", htmlPage); });
     server.begin();
     webSocket.begin();
     webSocket.onEvent(onWsEvent);
+
 }
     
 
@@ -64,6 +74,14 @@ void setup()
 // ============================================================================
 void loop() 
 {
-   server.handleClient();
-   webSocket.loop();
+  server.handleClient();
+  webSocket.loop();
+  static unsigned long last = 0;
+  if (millis() - last > 5000) 
+  {       // every 5 seconds
+    last = millis();
+    //webSocket.broadcastTXT("ping from ESP32 at " + String(millis()));
+  }
 }
+
+

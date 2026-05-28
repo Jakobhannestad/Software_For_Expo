@@ -1,7 +1,40 @@
 #include <SimpleFOC.h>
-#include <Pin.h>
+#include "Pin.h"
 #include <TLE5009.h>
 #include <SparkFun_STUSB4500.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <WebSocketsServer.h>
+
+const char* apSSID = "ESP32-Chat";
+const char* apPass = "12345678";
+
+WebServer server(80);
+WebSocketsServer webSocket(81);
+
+
+const char* htmlPage =
+"<!DOCTYPE html><html><head><title>ESP32 Chat</title></head><body>"
+"<h2>ESP32 Chat</h2>"
+"<div id='log' style='border:1px solid #ccc; height:200px; overflow:auto; padding:5px;'></div>"
+"<input id='msg' type='text' placeholder='Type a message'/>"
+"<button onclick='sendMsg()'>Send</button>"
+"<script>"
+"var ws = new WebSocket('ws://' + location.hostname + ':81/');"
+"var log = document.getElementById('log');"
+"ws.onopen = function(){ addLine('** connected **'); };"
+"ws.onclose = function(){ addLine('** disconnected **'); };"
+"ws.onmessage = function(e){ addLine('ESP32: ' + e.data); };"
+"function sendMsg(){"
+"  var i = document.getElementById('msg');"
+"  ws.send(i.value);"
+"  i.value = '';"
+"}"
+"function addLine(t){"
+"  log.innerHTML += t + '<br>';"
+"  log.scrollTop = log.scrollHeight;"
+"}"
+"</script></body></html>";
 
 STUSB4500 usb;
 
@@ -58,6 +91,21 @@ LowsideCurrentSense current_sense = LowsideCurrentSense(150.0f, Pin::MC_SOA, Pin
 Commander command = Commander(Serial);
 void onMotor(char* cmd) { command.motor(&motor, cmd); }
 
+void onWsEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
+  if (type == WStype_TEXT) {
+
+    char buf[64];
+    size_t n = (length < sizeof(buf) - 1) ? length : sizeof(buf) - 1;
+    memcpy(buf, payload, n);
+    buf[n] = '\0';
+    
+    command.run(buf);
+  } else if (type == WStype_CONNECTED) {
+    Serial.printf("Client %u connected\n", num);
+    webSocket.sendTXT(num, "hello from ESP32");
+  }
+}
+
 
 // ============================================================================
 //                        SETUP
@@ -65,6 +113,16 @@ void onMotor(char* cmd) { command.motor(&motor, cmd); }
 void setup() {
     // ========== Serial & Debug Init ==========
     Serial.begin(115200);
+
+    WiFi.softAP(apSSID, apPass);
+    Serial.print("AP IP: ");
+    Serial.println(WiFi.softAPIP());      // almost always 192.168.4.1
+
+    server.on("/", []() { server.send(200, "text/html", htmlPage); });
+    server.begin();
+    webSocket.begin();
+    webSocket.onEvent(onWsEvent);
+
     delay(500);
     Serial.println("Starting up...");
     SimpleFOCDebug::enable(&Serial);
@@ -87,9 +145,10 @@ void setup() {
         Wire.begin(Pin::I2C_SDA, Pin::I2C_SCL);
         delay(500);
 
+        
         if (!usb.begin()) {
             Serial.println("Error: Could not find STUSB4500!");
-            while (1);
+            
         }
         Serial.println("STUSB4500 connected!");
 
@@ -216,5 +275,7 @@ void loop() {
     motor.loopFOC();        // Run inner FOC current loop
     motor.move();           // Run outer motion control loop (uses motor.target)
     motor.monitor();        // Stream data to serial plot/monitor if enabled
-    command.run();          // Process incoming serial tuning commands
+                            // Process incoming serial tuning commands
+    server.handleClient();
+    webSocket.loop();        
 }
